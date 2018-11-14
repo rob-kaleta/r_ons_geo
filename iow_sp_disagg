@@ -1,5 +1,13 @@
 ####  This script merges KS and QS census data at OA level, and subsets only Isle of Wight data  ####
 
+# Set work directory
+setwd("D:/1_projects/SP_DAGG/data")
+
+# Set global variables
+#epsg <- make_EPSG()
+#bng_prj4 <- "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +datum=OSGB36 +units=m +no_defs"
+#bng_epsg <- 27700
+
 #### set library to local
 local<-"D:/R_LIB"
 default<-.libPaths()
@@ -14,8 +22,7 @@ library(raster)
 library(data.table)
 library(tidyr)
 library(stringr)
-# Set work directory
-setwd("D:/1_projects/SP_DAGG/data")
+library(fasterize)
 ########## Separate IOW OA to use as a case study / test area #### 
 ######## CREATE / LOAD lookups #########
 #### load OA through to LAD lookup
@@ -23,9 +30,10 @@ OA_to_LA_lu<-fread("lookups/OA_to_LA_lu.csv")
 # extract only IOW fields
 iow_lu<-filter(OA_to_LA_lu,LAD11NM == "Isle of Wight")
 ##### create a lookup of census questions to rename columns later 
-desc_l<-unique(list.files(recursive = TRUE,pattern="*DESC0.CSV"))
+desc_l<-unique(list.files("census/NDUnzip",recursive = TRUE,pattern="*DESC0.CSV"))
 desc<-lapply(desc_l,fread)
 census_codes_lu<-rbindlist(desc)
+# Adds column "meas_stat_desc" - a combination of all columns used to identify and describe each census code
 census_codes_lu<-mutate(census_codes_lu,meas_stat_desc=paste(ColumnVariableCode,ColumnVariableMeasurementUnit,ColumnVariableStatisticalUnit,ColumnVariableDescription,sep="-"))
 census_codes_lu$meas_stat_desc<-gsub(" ","_",census_codes_lu$meas_stat_desc)
 census_codes_lu$meas_stat_desc<-gsub(":_",":",census_codes_lu$meas_stat_desc)
@@ -39,7 +47,9 @@ census_codes_lu<-fread("lookups/census_codes_lu.csv")
 #fwrite(code_desc_LU,"lookups/code_desc_LU.csv")
 #code_desc_LU<-fread("lookups/code_desc_LU.csv")
 
+
 ####  Read in OA from fgdb #### 
+# choose one
 FGDB_UK<- "D:/1_projects/ONS_data.gdb"
 FGDB_UK<- "W:/ONS_Geography_Data_Repository/ONS_Geography_Data_Repository.gdb"
 
@@ -57,6 +67,69 @@ iow_bounds<-iow_oa %>%
             st_cast()
 iow_bounds_5k_buffer<-st_buffer(iow_bounds,5000)
 
+
+##### Processing raster data ####
+# upload rasters and crop to Isle of Wight's extent
+# format_name_cell-resolution
+r_night_lights_100<-raster("rasters/lights/svdnb_vcm_orm_2017_iow.tif")
+r_land_classes_100<-raster("rasters/LCM/LCM2015_GB_100M.tif")
+r_dem_25<-raster("rasters/eu_dem_v11_E30N30/eu_dem_v11_E30N30.tif")
+##### Processing vector data ####
+# raster processing function - bit of an overkill for now but will be useful when reproducing this or changing study areas
+# Creates an empty raster with a specified resolution and CRS, extent is equal to your study area.
+# Input raster is reprojected, cropped and masked to the extent of the study area
+######### to do  make it work with a folder/list of rasters, not individual files 
+process_raster<-function(raster,area,resolution,crs){
+                defined<-ls(sorted=FALSE)
+                passed<-names(as.list(match.call())[-1])
+                if (any(!defined %in% passed)) {
+                stop(paste("missinge values for",paste(setdiff(defined,passed),collapse=",")))
+                }
+                  if (is.numeric(resolution)==FALSE){
+                    stop(paste("Error resolution must be numeric"))
+                  }
+                  if (is.numeric(crs)==FALSE){
+                  stop(paste("Error crs must be numeric"))
+                  }
+                  empty_raster<-raster(area,res=resolution,crs=crs)
+                  if (floor(raster@data@max)==raster@data@max){
+                  interp<-"ngb"  
+                  } else{interp<-"bilinear"}
+  empty_raster<-raster(area,res=resolution,crs=crs)
+  projectRaster(raster,empty_raster,method=interp)%>%
+  crop(as.vector(extent(area)))%>%
+  mask(area)
+}
+
+r_night_lights_100_iow<-process_raster(raster=r_night_lights_100,area=iow_bounds,resolution=100,crs=27700)
+r_land_classes_100_iow<-process_raster(raster=r_land_classes_100,area=iow_bounds,resolution=100,crs=27700)
+r_dem_25_iow<-process_raster(raster=r_dem_25,area=iow_bounds,resolution=100,crs=27700)
+
+x<-stack(r_night_lights_100_iow,r_land_classes_100_iow,r_dem_25_iow)
+r_land_classes_100_iow_1<-r_land_classes_100_iow_1[r_land_classes_100_iow_1==1]
+
+# categorical rasters processing
+# land class reclassification to aggregate levels
+m<-c(0,1,1, 1,2,2, 2,3,3, 3,4,4, 4,8,5, 8,12,6, 12,13,7, 13,14,8, 14,19,9, 19,21,10)
+reclass_matrix<-matrix(m,ncol=3,byrow=TRUE)
+r_land_classes_100_iow[r_land_classes_100_iow==128]<-NA
+r_land_classes_100_iow_reclass<-reclassify(r_land_classes_100_iow,reclass_matrix)
+
+cat_list<-as.list(seq(r_land_classes_100_iow_reclass@data@min,r_land_classes_100_iow_reclass@data@max))
+
+land_class_distance_stack<-do.call(stack,
+                          lapply(cat_list,function(x){
+                          r_land_classes_100_iow_reclass[r_land_classes_100_iow_reclass!=x]<-NA 
+                          distance(r_land_classes_100_iow_reclass)
+                          }
+))
+land_class_distance_stack<-mask(land_class_distance_stack,iow_bounds)
+
+
+####### This script imports census CSVs at OA level and merges them into one data table
+####### Census data is joined with spatial data
+####### Column names are changed to be more descriptive on the basis of census_codes_lu look up 
+####### OA level census data is then rasterised and put into a raster stack  
 #### mass import census CSVs from nested folders and merge into one table ####
 start<-Sys.time()
 census_l<-unique(list.files("census/NDUnzip",recursive = TRUE,pattern="*DATA.CSV",full.names = TRUE))
@@ -83,11 +156,11 @@ plot_vars<-function(variable){
     title = var_plot
   )
 }
-# plot variable - numerical only
-plot_vars()
+# plot variable - select by column number
+plot_vars(10)
 
 
-####  rasterizing census data ####
+#### rasterizing census data ####
 # create empty raster equal to IOW bounds 5k buffer, resolution of 100m
 r<-raster(iow_bounds_5k_buffer,res=100)
 # list of columns / variables to be rasterised
@@ -96,10 +169,10 @@ rast_l<-as.list(colnames(iow_oa_with_census)[5:2107])
 Sys.time()
 start<-Sys.time()
 iow_stack<- do.call(stack,
-            lapply(rast_l,function(val){
-            fasterize(iow_oa_with_census,raster=r,field=val)
-        }
-    )
+                    lapply(rast_l,function(val){
+                      fasterize(iow_oa_with_census,raster=r,field=val)
+                    }
+                    )
 )
 end<-Sys.time()-start
 print(end)
@@ -108,4 +181,7 @@ names(iow_stack)<-rast_l
 # quick plot of raster 
 plot(iow_stack[[2]],main=names(iow_stack)[2],cex.main=0.8,cex.axis=0.7,cex.lab=0.7)
 
-roads<-st_read(FGDB_UK,layer="ITN_WHOLE_UKRdNd_1")%>%slice(1:2)
+
+
+
+
