@@ -15,21 +15,25 @@ library(svglite)
 
 ############################## DO NOT EDIT! ################################################################################
 #################### function to create waffle charts - run it once every time you open this script ########################  
-waffle_fun<-function(x,data,group_col,start_col,end_col){
-test
-  # set change column names to var_names
-  names(data)[start_col:end_col]<- var_names
+waffle_fun<-function(x, data, group_col, start_col, end_col, categories=var_names, colours=var_colours){
+  #check if var_names and var_colours lenghts match
+  if (length(var_names)!=length(var_colours)) {
+    print ("WARNING: Var_colours does not match Var_names - some colours will be assigned automatically")
+  }
+  else{}
+   set change column names to var_names
+  names(data)[start_col:end_col]<- categories
   # columns with data
-    cols<-seq(start_col,end_col)
-    # take one row of data
-    sub_data<-data[x,]
-    sub_data[is.na(sub_data)]<-0
-      # calculate percentage and round down
-      percent_floor<-floor(100*(sub_data[,cols]/rowSums(sub_data[,cols])))
-      # calculate the remainder - difference between percent and perecent_floor
-      remainders<-100*(sub_data[,cols]/rowSums(sub_data[,cols]))-(percent_floor)
-        # reorder percent_floor by decreasing size of remainder
-        percent_floor2<-percent_floor[,order(remainders,decreasing=TRUE)]
+  cols<-seq(start_col,end_col)
+  # take one row of data
+  sub_data<-data[x,]
+  sub_data[is.na(sub_data)]<-0
+  # calculate percentage and round down
+  percent_floor<-floor(100*(sub_data[,cols]/rowSums(sub_data[,cols])))
+  # calculate the remainder - difference between percent and perecent_floor
+  remainders<-100*(sub_data[,cols]/rowSums(sub_data[,cols]))-(percent_floor)
+  # reorder percent_floor by decreasing size of remainder
+  percent_floor2<-percent_floor[,order(remainders,decreasing=TRUE)]
   # loop over values and 1 in order until sum is 100
   i<-1
   for (i in 1:length(percent_floor2)){
@@ -47,7 +51,7 @@ test
   #create waffle plot - TODO - allow user to set parameters in function call
   waffle_plot<-waffle(percent_floor2,rows=10,size=1,flip=TRUE,colors=var_colours,title=sub_data[,group_col])
   # export as svg
-  ggsave(waffle_plot,file=paste0("data/out/",sub_data[,group_col],"_waffle.svg"),dpi=72,width=4,height=4, units="in")
+  #ggsave(waffle_plot,file=paste0("data/out/",sub_data[,group_col],"_waffle.svg"),dpi=72,width=4,height=4, units="in")
   print("==============Done==============")
   
   return(waffle_plot)
@@ -55,19 +59,25 @@ test
 ############################## DO NOT EDIT! #################################################################################
 
 #### Input your parameters and run everything below this line
+
 # set working directory
 setwd("D:/1_projects/cartograms")
+
 # load data
 input<-read.csv("data/data_houses.csv",sep=",")
-#data[is.na(data)]<-0
+
 # input names of your categories in the current column order from left to right
 var_names<- c("Detached","Semi-detached","Terrace","Flat")
+
 # hex values of colours - same order as names 
 var_colours<-c("#652B8E","#0DB3C1","#F16923","#FDCC0C")
+
 #print column names and their index
 as.data.frame(names(input))
+
 # creates a list of rows to be iterated
 waffle_size<-as.list(seq(1:nrow(input)))
+
 #### Executes the waffle function ####
 waffle_out<-lapply(waffle_size,waffle_fun,data=input,group_col=3,start_col=4,end_col=7)
 
