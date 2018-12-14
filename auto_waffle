@@ -1,8 +1,8 @@
 
 #### set library to local and load packages - ONS quirk 
-local<-"D:/R_LIB"
-default<-.libPaths()
-new<-c(local,default)
+local <- "D:/R_LIB"
+default <- .libPaths()
+new <- c(local,default)
 .libPaths(new)
 
 library(dplyr)
@@ -14,7 +14,7 @@ library(svglite)
 #################### function to create waffle charts - run it once every time you open this script ########################  
 waffle_fun <- function(x,data,group_col,start_col,end_col){
   # Set change column names to var_names
-  names(data)[start_col:end_col]<- var_names
+  names(data)[start_col:end_col] <- var_names
     # Columns with data
     cols <- seq(start_col,end_col)
       # Take one row of data
